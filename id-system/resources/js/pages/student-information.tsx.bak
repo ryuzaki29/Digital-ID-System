@@ -1,0 +1,942 @@
+import AppLayout from '@/layouts/app-layout';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { type BreadcrumbItem, type Student } from '@/types';
+import { Head, useForm, usePage, router } from '@inertiajs/react';
+import { Users, Search, Plus, Edit, Trash2, CheckCircle, Upload, X, User, FileUp, Download } from 'lucide-react';
+import { useState } from 'react';
+
+interface StudentInformationProps {
+    students: Student[];
+    flash?: { success?: string };
+    [key: string]: unknown;
+}
+
+const breadcrumbs: BreadcrumbItem[] = [
+    {
+        title: 'Student Information',
+        href: '/student-information',
+    },
+];
+
+export default function StudentInformation({ students }: StudentInformationProps) {
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filterCollege, setFilterCollege] = useState('all');
+    const [filterYearLevel, setFilterYearLevel] = useState('all');
+    const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [isBatchUploadOpen, setIsBatchUploadOpen] = useState(false);
+    const [batchFile, setBatchFile] = useState<File | null>(null);
+    const [batchProcessing, setBatchProcessing] = useState(false);
+
+    const { flash } = usePage<StudentInformationProps>().props;
+
+    const { data, setData, post, delete: destroy, processing, errors, reset, clearErrors } = useForm({
+        student_number: '',
+        full_name: '',
+        email: '',
+        program: '',
+        year_level: '',
+        college: '',
+        id_image: null as File | string | null,
+    });
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        post('/students', {
+            forceFormData: true,
+            onSuccess: () => {
+                setIsModalOpen(false);
+                setImagePreview(null);
+                reset();
+            },
+        });
+    };
+
+    const handleEdit = (student: Student) => {
+        setSelectedStudent(student);
+        setImagePreview(null); // Clear any previous preview
+        
+        // Clear any existing errors first
+        clearErrors();
+        
+        setData({
+            student_number: student.student_number,
+            full_name: student.full_name,
+            email: student.email,
+            program: student.program,
+            year_level: student.year_level,
+            college: student.college,
+            id_image: null, // Reset file input
+        });
+        setIsEditModalOpen(true);
+    };
+
+    const handleEditSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (selectedStudent) {
+            // Use router.post with _method override for file uploads
+            router.post(`/students/${selectedStudent.id}`, {
+                ...data,
+                _method: 'PUT'
+            }, {
+                forceFormData: true,
+                preserveScroll: true,
+                onSuccess: () => {
+                    setIsEditModalOpen(false);
+                    setSelectedStudent(null);
+                    setImagePreview(null);
+                    reset();
+                },
+            });
+        }
+    };
+
+    const handleAddStudent = () => {
+        reset(); // Clear form data
+        setSelectedStudent(null);
+        setIsModalOpen(true);
+    };
+
+    const handleBatchUpload = () => {
+        setBatchFile(null);
+        setIsBatchUploadOpen(true);
+    };
+
+    const handleBatchFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            setBatchFile(file);
+        }
+    };
+
+    const handleBatchSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!batchFile) return;
+
+        setBatchProcessing(true);
+        
+        const formData = new FormData();
+        formData.append('batch_file', batchFile);
+
+        router.post('/students/batch-upload', formData, {
+            forceFormData: true,
+            preserveScroll: true,
+            onSuccess: () => {
+                setIsBatchUploadOpen(false);
+                setBatchFile(null);
+                setBatchProcessing(false);
+            },
+            onError: () => {
+                setBatchProcessing(false);
+            },
+        });
+    };
+
+    const downloadTemplate = () => {
+        // Create a simple CSV template
+        const csvContent = "student_number,full_name,email,program,year_level,college\nSTUD001,John Doe,john@example.com,Computer Science,1st Year,College of Engineering\n";
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'student_upload_template.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    };
+
+    const handleDelete = (student: Student) => {
+        setSelectedStudent(student);
+        setIsDeleteModalOpen(true);
+    };
+
+    const confirmDelete = () => {
+        if (selectedStudent) {
+            destroy(`/students/${selectedStudent.id}`, {
+                onSuccess: () => {
+                    setIsDeleteModalOpen(false);
+                    setSelectedStudent(null);
+                },
+            });
+        }
+    };
+
+    // Filter and sort students based on search and filters
+    const filteredStudents = students
+        .filter(student => {
+            const matchesSearch = student.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                student.student_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                student.email.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesCollege = !filterCollege || filterCollege === 'all' || student.college === filterCollege;
+            const matchesYearLevel = !filterYearLevel || filterYearLevel === 'all' || student.year_level === filterYearLevel;
+            
+            return matchesSearch && matchesCollege && matchesYearLevel;
+        })
+        .sort((a, b) => {
+            // Sort by updated_at first (most recently updated first)
+            const updatedAtDiff = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+            if (updatedAtDiff !== 0) return updatedAtDiff;
+            
+            // If updated_at is the same, sort by created_at (most recently created first)
+            return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+        });
+
+    // Get unique colleges and year levels for filters
+    const colleges = [...new Set(students.map(s => s.college))];
+    const yearLevels = [...new Set(students.map(s => s.year_level))];
+
+    return (
+        <AppLayout breadcrumbs={breadcrumbs}>
+            <Head title="Student Information" />
+            
+            <div className="flex h-full flex-1 flex-col gap-6 p-6">
+                {flash?.success && (
+                    <Alert className="bg-green-50 border-green-200">
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                        <AlertDescription className="text-green-800">
+                            {flash.success}
+                        </AlertDescription>
+                    </Alert>
+                )}
+                
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-3xl font-bold tracking-tight">Student Information</h1>
+                        <p className="text-muted-foreground">
+                            Manage and view comprehensive student information and records.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Dialog open={isBatchUploadOpen} onOpenChange={setIsBatchUploadOpen}>
+                            <DialogTrigger asChild>
+                                <Button variant="outline" className="flex items-center gap-2" onClick={handleBatchUpload}>
+                                    <FileUp className="h-4 w-4" />
+                                    Batch Upload
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-lg">
+                                <DialogHeader>
+                                    <DialogTitle>Batch Upload Students</DialogTitle>
+                                    <DialogDescription>
+                                        Upload multiple student records using a CSV file.
+                                    </DialogDescription>
+                                </DialogHeader>
+                                <form onSubmit={handleBatchSubmit} className="space-y-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="batch_file">CSV File</Label>
+                                        <Input
+                                            id="batch_file"
+                                            type="file"
+                                            accept=".csv"
+                                            onChange={handleBatchFileChange}
+                                            required
+                                        />
+                                        <p className="text-sm text-muted-foreground">
+                                            Upload a CSV file with columns: student_number, full_name, email, program, year_level, college
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={downloadTemplate}
+                                            className="flex items-center gap-2"
+                                        >
+                                            <Download className="h-4 w-4" />
+                                            Download Template
+                                        </Button>
+                                    </div>
+                                    <div className="flex justify-end space-x-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            onClick={() => setIsBatchUploadOpen(false)}
+                                        >
+                                            Cancel
+                                        </Button>
+                                        <Button type="submit" disabled={!batchFile || batchProcessing}>
+                                            {batchProcessing ? 'Uploading...' : 'Upload'}
+                                        </Button>
+                                    </div>
+                                </form>
+                            </DialogContent>
+                        </Dialog>
+                        <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+                            <DialogTrigger asChild>
+                                <Button className="flex items-center gap-2" onClick={handleAddStudent}>
+                                    <Plus className="h-4 w-4" />
+                                    Add Student
+                                </Button>
+                            </DialogTrigger>
+                        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                            <DialogHeader>
+                                <DialogTitle>Add Student Information</DialogTitle>
+                                <DialogDescription>
+                                    Fill in the details to add new student information.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <form onSubmit={handleSubmit}>
+                                <div className="space-y-4 py-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="studentNumber">Student Number</Label>
+                                        <Input
+                                            id="studentNumber"
+                                            placeholder="e.g., 2021-123456"
+                                            value={data.student_number}
+                                            onChange={(e) => setData('student_number', e.target.value)}
+                                            className={errors.student_number ? 'border-red-500' : ''}
+                                        />
+                                        {errors.student_number && (
+                                            <p className="text-sm text-red-500">{errors.student_number}</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="fullName">Full Name</Label>
+                                        <Input
+                                            id="fullName"
+                                            placeholder="Enter full name"
+                                            value={data.full_name}
+                                            onChange={(e) => setData('full_name', e.target.value)}
+                                            className={errors.full_name ? 'border-red-500' : ''}
+                                        />
+                                        {errors.full_name && (
+                                            <p className="text-sm text-red-500">{errors.full_name}</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="email">Email</Label>
+                                        <Input
+                                            id="email"
+                                            type="email"
+                                            placeholder="student@up.edu.ph"
+                                            value={data.email}
+                                            onChange={(e) => setData('email', e.target.value)}
+                                            className={errors.email ? 'border-red-500' : ''}
+                                        />
+                                        {errors.email && (
+                                            <p className="text-sm text-red-500">{errors.email}</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="program">Program</Label>
+                                        <Select value={data.program} onValueChange={(value) => setData('program', value)}>
+                                            <SelectTrigger className={errors.program ? 'border-red-500' : ''}>
+                                                <SelectValue placeholder="Select program" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="computer-science">Computer Science</SelectItem>
+                                                <SelectItem value="engineering">Engineering</SelectItem>
+                                                <SelectItem value="business">Business Administration</SelectItem>
+                                                <SelectItem value="education">Education</SelectItem>
+                                                <SelectItem value="medicine">Medicine</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        {errors.program && (
+                                            <p className="text-sm text-red-500">{errors.program}</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="yearLevel">Year Level</Label>
+                                        <Select value={data.year_level} onValueChange={(value) => setData('year_level', value)}>
+                                            <SelectTrigger className={errors.year_level ? 'border-red-500' : ''}>
+                                                <SelectValue placeholder="Select year level" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="1st">1st Year</SelectItem>
+                                                <SelectItem value="2nd">2nd Year</SelectItem>
+                                                <SelectItem value="3rd">3rd Year</SelectItem>
+                                                <SelectItem value="4th">4th Year</SelectItem>
+                                                <SelectItem value="5th">5th Year</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        {errors.year_level && (
+                                            <p className="text-sm text-red-500">{errors.year_level}</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="college">College</Label>
+                                        <Select value={data.college} onValueChange={(value) => setData('college', value)}>
+                                            <SelectTrigger className={errors.college ? 'border-red-500' : ''}>
+                                                <SelectValue placeholder="Select college" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="engineering">College of Engineering</SelectItem>
+                                                <SelectItem value="science">College of Science</SelectItem>
+                                                <SelectItem value="business">College of Business</SelectItem>
+                                                <SelectItem value="education">College of Education</SelectItem>
+                                                <SelectItem value="medicine">College of Medicine</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                        {errors.college && (
+                                            <p className="text-sm text-red-500">{errors.college}</p>
+                                        )}
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="id_image">ID Photo</Label>
+                                        <div className="flex flex-col gap-4">
+                                            <div className="flex items-center gap-4">
+                                                <Input
+                                                    id="id_image"
+                                                    type="file"
+                                                    accept="image/*"
+                                                    onChange={(e) => {
+                                                        const file = e.target.files?.[0];
+                                                        if (file) {
+                                                            setData('id_image', file);
+                                                            // Create preview URL
+                                                            const reader = new FileReader();
+                                                            reader.onload = (e) => {
+                                                                setImagePreview(e.target?.result as string);
+                                                            };
+                                                            reader.readAsDataURL(file);
+                                                        }
+                                                    }}
+                                                    className={errors.id_image ? 'border-red-500' : ''}
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => {
+                                                        const input = document.getElementById('id_image') as HTMLInputElement;
+                                                        input.click();
+                                                    }}
+                                                >
+                                                    <Upload className="h-4 w-4 mr-2" />
+                                                    Choose File
+                                                </Button>
+                                            </div>
+                                            {imagePreview && (
+                                                <div className="relative w-32 h-40 border rounded overflow-hidden">
+                                                    <img 
+                                                        src={imagePreview} 
+                                                        alt="ID Preview" 
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setImagePreview(null);
+                                                            setData('id_image', null);
+                                                            const input = document.getElementById('id_image') as HTMLInputElement;
+                                                            input.value = '';
+                                                        }}
+                                                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                                                    >
+                                                        <X className="h-3 w-3" />
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                        {errors.id_image && (
+                                            <p className="text-sm text-red-500">{errors.id_image}</p>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="flex justify-end gap-2">
+                                    <Button 
+                                        type="button"
+                                        variant="outline" 
+                                        onClick={() => {
+                                            setIsModalOpen(false);
+                                            setImagePreview(null);
+                                            reset();
+                                        }}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button type="submit" disabled={processing}>
+                                        {processing ? 'Saving...' : 'Save Student'}
+                                    </Button>
+                                </div>
+                            </form>
+                        </DialogContent>
+                    </Dialog>
+                </div>
+
+                {/* Edit Student Modal */}
+                <Dialog open={isEditModalOpen} onOpenChange={(open) => {
+                    setIsEditModalOpen(open);
+                    if (!open) {
+                        setSelectedStudent(null);
+                        setImagePreview(null);
+                        clearErrors();
+                        reset();
+                    }
+                }}>
+                    <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                        <DialogHeader>
+                            <DialogTitle>Edit Student Information</DialogTitle>
+                            <DialogDescription>
+                                Update the student details below.
+                            </DialogDescription>
+                        </DialogHeader>
+                        <form onSubmit={handleEditSubmit}>
+                            <div className="space-y-4 py-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="editStudentNumber">Student Number</Label>
+                                    <Input
+                                        id="editStudentNumber"
+                                        placeholder="e.g., 2021-123456"
+                                        value={data.student_number}
+                                        onChange={(e) => setData('student_number', e.target.value)}
+                                        className={errors.student_number ? 'border-red-500' : ''}
+                                    />
+                                    {errors.student_number && (
+                                        <p className="text-sm text-red-500">{errors.student_number}</p>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="editFullName">Full Name</Label>
+                                    <Input
+                                        id="editFullName"
+                                        placeholder="Enter full name"
+                                        value={data.full_name}
+                                        onChange={(e) => setData('full_name', e.target.value)}
+                                        className={errors.full_name ? 'border-red-500' : ''}
+                                    />
+                                    {errors.full_name && (
+                                        <p className="text-sm text-red-500">{errors.full_name}</p>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="editEmail">Email</Label>
+                                    <Input
+                                        id="editEmail"
+                                        type="email"
+                                        placeholder="student@up.edu.ph"
+                                        value={data.email}
+                                        onChange={(e) => setData('email', e.target.value)}
+                                        className={errors.email ? 'border-red-500' : ''}
+                                    />
+                                    {errors.email && (
+                                        <p className="text-sm text-red-500">{errors.email}</p>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="editProgram">Program</Label>
+                                    <Select value={data.program} onValueChange={(value) => setData('program', value)}>
+                                        <SelectTrigger className={errors.program ? 'border-red-500' : ''}>
+                                            <SelectValue placeholder="Select program" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="computer-science">Computer Science</SelectItem>
+                                            <SelectItem value="engineering">Engineering</SelectItem>
+                                            <SelectItem value="business">Business Administration</SelectItem>
+                                            <SelectItem value="education">Education</SelectItem>
+                                            <SelectItem value="medicine">Medicine</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    {errors.program && (
+                                        <p className="text-sm text-red-500">{errors.program}</p>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="editYearLevel">Year Level</Label>
+                                    <Select value={data.year_level} onValueChange={(value) => setData('year_level', value)}>
+                                        <SelectTrigger className={errors.year_level ? 'border-red-500' : ''}>
+                                            <SelectValue placeholder="Select year level" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="1st">1st Year</SelectItem>
+                                            <SelectItem value="2nd">2nd Year</SelectItem>
+                                            <SelectItem value="3rd">3rd Year</SelectItem>
+                                            <SelectItem value="4th">4th Year</SelectItem>
+                                            <SelectItem value="5th">5th Year</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    {errors.year_level && (
+                                        <p className="text-sm text-red-500">{errors.year_level}</p>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="editCollege">College</Label>
+                                    <Select value={data.college} onValueChange={(value) => setData('college', value)}>
+                                        <SelectTrigger className={errors.college ? 'border-red-500' : ''}>
+                                            <SelectValue placeholder="Select college" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="engineering">College of Engineering</SelectItem>
+                                            <SelectItem value="science">College of Science</SelectItem>
+                                            <SelectItem value="business">College of Business</SelectItem>
+                                            <SelectItem value="education">College of Education</SelectItem>
+                                            <SelectItem value="medicine">College of Medicine</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                    {errors.college && (
+                                        <p className="text-sm text-red-500">{errors.college}</p>
+                                    )}
+                                </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="edit_id_image">ID Photo</Label>
+                                    <div className="flex flex-col gap-4">
+                                        <div className="flex items-center gap-4">
+                                            <Input
+                                                id="edit_id_image"
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0];
+                                                    if (file) {
+                                                        setData('id_image', file);
+                                                        // Create preview URL
+                                                        const reader = new FileReader();
+                                                        reader.onload = (e) => {
+                                                            setImagePreview(e.target?.result as string);
+                                                        };
+                                                        reader.readAsDataURL(file);
+                                                    } else {
+                                                        // Reset if no file selected
+                                                        setData('id_image', null);
+                                                        setImagePreview(null);
+                                                    }
+                                                }}
+                                                className={errors.id_image ? 'border-red-500' : ''}
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => {
+                                                    const input = document.getElementById('edit_id_image') as HTMLInputElement;
+                                                    input.click();
+                                                }}
+                                            >
+                                                <Upload className="h-4 w-4 mr-2" />
+                                                Choose File
+                                            </Button>
+                                        </div>
+                                        {/* Show current image if exists and no new image selected */}
+                                        {selectedStudent?.id_image && !imagePreview && (
+                                            <div className="relative w-32 h-40 border rounded overflow-hidden">
+                                                <img 
+                                                    src={`/storage/${selectedStudent.id_image}`} 
+                                                    alt="Current ID" 
+                                                    className="w-full h-full object-cover"
+                                                    onError={(e) => {
+                                                        const target = e.target as HTMLImageElement;
+                                                        const fallback = document.getElementById(`fallback-${selectedStudent.id}`);
+                                                        target.style.display = 'none';
+                                                        if (fallback) fallback.style.display = 'flex';
+                                                    }}
+                                                />
+                                                <div className="absolute inset-0 flex items-center justify-center bg-gray-100" style={{ display: 'none' }} id={`fallback-${selectedStudent.id}`}>
+                                                    <div className="text-center">
+                                                        <User className="h-8 w-8 text-gray-400 mx-auto mb-1" />
+                                                        <p className="text-xs text-gray-500">Image not found</p>
+                                                    </div>
+                                                </div>
+                                                <p className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 text-center">
+                                                    Current Image
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        // Set a flag to remove the image
+                                                        setData('id_image', 'REMOVE');
+                                                        setImagePreview('REMOVED');
+                                                    }}
+                                                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                                                    title="Remove current image"
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        )}
+                                        {/* Show "image removed" message */}
+                                        {imagePreview === 'REMOVED' && (
+                                            <div className="w-32 h-40 border-2 border-dashed border-gray-300 rounded flex items-center justify-center bg-gray-50">
+                                                <div className="text-center">
+                                                    <X className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                                                    <p className="text-xs text-gray-500">Image will be removed</p>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setData('id_image', null);
+                                                            setImagePreview(null);
+                                                            // Reset the file input
+                                                            const input = document.getElementById('edit_id_image') as HTMLInputElement;
+                                                            if (input) input.value = '';
+                                                        }}
+                                                        className="text-xs text-blue-500 hover:text-blue-700 mt-1"
+                                                    >
+                                                        Undo
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {/* Show preview if new image selected */}
+                                        {imagePreview && imagePreview !== 'REMOVED' && (
+                                            <div className="relative w-32 h-40 border rounded overflow-hidden">
+                                                <img 
+                                                    src={imagePreview} 
+                                                    alt="ID Preview" 
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                <p className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs p-1 text-center">
+                                                    New Image
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setImagePreview(null);
+                                                        setData('id_image', null);
+                                                        const input = document.getElementById('edit_id_image') as HTMLInputElement;
+                                                        input.value = '';
+                                                    }}
+                                                    className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                                                    title="Remove new image"
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {errors.id_image && (
+                                        <p className="text-sm text-red-500">{errors.id_image}</p>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex justify-end gap-2">
+                                <Button 
+                                    type="button"
+                                    variant="outline" 
+                                    onClick={() => {
+                                        setIsEditModalOpen(false);
+                                        setSelectedStudent(null);
+                                        setImagePreview(null);
+                                        clearErrors();
+                                        reset();
+                                    }}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button type="submit" disabled={processing}>
+                                    {processing ? 'Updating...' : 'Update Student'}
+                                </Button>
+                            </div>
+                        </form>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Delete Confirmation Modal */}
+                <Dialog open={isDeleteModalOpen} onOpenChange={setIsDeleteModalOpen}>
+                    <DialogContent className="max-w-md">
+                        <DialogHeader>
+                            <DialogTitle>Delete Student</DialogTitle>
+                            <DialogDescription>
+                                Are you sure you want to delete this student? This action cannot be undone.
+                            </DialogDescription>
+                        </DialogHeader>
+                        {selectedStudent && (
+                            <div className="py-4">
+                                <div className="bg-muted p-4 rounded-lg">
+                                    <p className="font-medium">{selectedStudent.full_name}</p>
+                                    <p className="text-sm text-muted-foreground">{selectedStudent.student_number}</p>
+                                    <p className="text-sm text-muted-foreground">{selectedStudent.email}</p>
+                                </div>
+                            </div>
+                        )}
+                        <div className="flex justify-end gap-2">
+                            <Button 
+                                type="button"
+                                variant="outline" 
+                                onClick={() => {
+                                    setIsDeleteModalOpen(false);
+                                    setSelectedStudent(null);
+                                }}
+                            >
+                                Cancel
+                            </Button>
+                            <Button 
+                                variant="destructive"
+                                onClick={confirmDelete}
+                                disabled={processing}
+                            >
+                                {processing ? 'Deleting...' : 'Delete Student'}
+                            </Button>
+                        </div>
+                    </DialogContent>
+                </Dialog>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <Users className="h-5 w-5" />
+                            Student Database
+                        </CardTitle>
+                        <CardDescription>
+                            Complete list of registered students with their academic information.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        {/* Search and Filters */}
+                        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                            <div className="flex-1 relative">
+                                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Search by name, student number, or email..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="pl-10"
+                                />
+                            </div>
+                            <Select value={filterCollege} onValueChange={setFilterCollege}>
+                                <SelectTrigger className="w-[200px]">
+                                    <SelectValue placeholder="Filter by College" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Colleges</SelectItem>
+                                    {colleges.map(college => (
+                                        <SelectItem key={college} value={college}>
+                                            {college}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            <Select value={filterYearLevel} onValueChange={setFilterYearLevel}>
+                                <SelectTrigger className="w-[150px]">
+                                    <SelectValue placeholder="Year Level" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Years</SelectItem>
+                                    {yearLevels.map(year => (
+                                        <SelectItem key={year} value={year}>
+                                            {year}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+
+                        {/* Students Table */}
+                        {filteredStudents.length > 0 ? (
+                            <div className="rounded-md border">
+                                <div className="relative w-full overflow-auto">
+                                    <table className="w-full caption-bottom text-sm">
+                                        <thead className="[&_tr]:border-b">
+                                            <tr className="border-b transition-colors hover:bg-muted/50">
+                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Student Number</th>
+                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">
+                                                    <div className="flex items-center gap-2">
+                                                        Full Name
+                                                        <span className="text-xs text-muted-foreground/60" title="Sorted by most recently updated">
+                                                            ↓ Latest
+                                                        </span>
+                                                    </div>
+                                                </th>
+                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Email</th>
+                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Program</th>
+                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Year Level</th>
+                                                <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">College</th>
+                                                <th className="h-12 px-4 text-center align-middle font-medium text-muted-foreground">Photo</th>
+                                                <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="[&_tr:last-child]:border-0">
+                                            {filteredStudents.map((student) => (
+                                                <tr key={student.id} className="border-b transition-colors hover:bg-muted/50">
+                                                    <td className="p-4 align-middle font-mono">
+                                                        {student.student_number}
+                                                    </td>
+                                                    <td className="p-4 align-middle font-medium">
+                                                        {student.full_name}
+                                                    </td>
+                                                    <td className="p-4 align-middle text-muted-foreground">
+                                                        {student.email}
+                                                    </td>
+                                                    <td className="p-4 align-middle">{student.program}</td>
+                                                    <td className="p-4 align-middle">{student.year_level}</td>
+                                                    <td className="p-4 align-middle">{student.college}</td>
+                                                    <td className="p-4 align-middle text-center">
+                                                        <div className="w-10 h-12 mx-auto rounded overflow-hidden bg-gray-100 flex items-center justify-center">
+                                                            {student.id_image ? (
+                                                                <img 
+                                                                    src={`/storage/${student.id_image}`} 
+                                                                    alt="Student" 
+                                                                    className="w-full h-full object-cover"
+                                                                />
+                                                            ) : (
+                                                                <User className="h-6 w-6 text-gray-400" />
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4 align-middle text-right">
+                                                        <div className="flex justify-end gap-2">
+                                                            <Button 
+                                                                variant="ghost" 
+                                                                size="sm"
+                                                                onClick={() => handleEdit(student)}
+                                                                title="Edit Student"
+                                                            >
+                                                                <Edit className="h-4 w-4" />
+                                                            </Button>
+                                                            <Button 
+                                                                variant="ghost" 
+                                                                size="sm" 
+                                                                className="text-destructive hover:text-destructive"
+                                                                onClick={() => handleDelete(student)}
+                                                                title="Delete Student"
+                                                            >
+                                                                <Trash2 className="h-4 w-4" />
+                                                            </Button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-center py-12">
+                                <Users className="mx-auto h-12 w-12 text-muted-foreground" />
+                                <h3 className="mt-4 text-lg font-semibold">No students found</h3>
+                                <p className="mt-2 text-muted-foreground">
+                                    {students.length === 0 
+                                        ? "Get started by adding your first student."
+                                        : "Try adjusting your search or filter criteria."
+                                    }
+                                </p>
+                                {students.length === 0 && (
+                                    <Button className="mt-4" onClick={handleAddStudent}>
+                                        <Plus className="mr-2 h-4 w-4" />
+                                        Add Student
+                                    </Button>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Summary */}
+                        {students.length > 0 && (
+                            <div className="mt-6 flex items-center justify-between text-sm text-muted-foreground">
+                                <div className="space-y-1">
+                                    <p>
+                                        Showing {filteredStudents.length} of {students.length} students
+                                    </p>
+                                    <p className="text-xs text-muted-foreground/80">
+                                        Sorted by most recently updated
+                                    </p>
+                                </div>
+                                <p>
+                                    Total students: {students.length}
+                                </p>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
+            </div>
+        </AppLayout>
+    );
+}
